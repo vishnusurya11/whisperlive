@@ -29,18 +29,24 @@ git clone https://github.com/vishnusurya11/whisperlive.git
 cd whisperlive
 ```
 
-### 2. Install UV (Fast Python Package Manager)
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
+### 2. Easy Installation
+
+#### Windows (Recommended)
+```batch
+# Just double-click or run:
+setup.bat
 ```
 
-### 3. Create virtual environment
+#### Alternative: Manual Installation
 ```bash
-uv venv .venv --python 3.11
-source .venv/bin/activate  # Linux/Mac
-# or
-.venv\Scripts\activate  # Windows
+# Create virtual environment
+python -m venv .venv
+
+# Activate it
+# Windows:
+.venv\Scripts\activate
+# Linux/Mac:
+source .venv/bin/activate
 ```
 
 ### 4. Install dependencies
