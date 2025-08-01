@@ -19,17 +19,25 @@ from src.config import UI_CONFIG, SHORTCUTS, PERFORMANCE
 
 import numpy as np
 import platform
+import ctypes
 
 # Platform-specific imports
 if platform.system() == "Windows":
     import msvcrt
-    import asyncio
-    # Windows event loop policy
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    try:
+        import asyncio
+        # Windows event loop policy
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except:
+        pass
 else:
-    import termios
-    import tty
-    import select
+    try:
+        import termios
+        import tty
+        import select
+    except ImportError:
+        # These modules might not be available on all Unix systems
+        pass
 
 # Try to import keyboard, fallback to basic input if not available
 try:
@@ -62,6 +70,17 @@ class KeyboardHandler:
                     self.callbacks[key]()
 
 
+def is_admin():
+    """Check if running with admin privileges"""
+    try:
+        if platform.system() == "Windows":
+            return ctypes.windll.shell32.IsUserAnAdmin()
+        else:
+            return os.getuid() == 0
+    except:
+        return False
+
+
 class SpeechToTextApp:
     def __init__(self):
         self.audio_capture = None
@@ -91,6 +110,13 @@ class SpeechToTextApp:
             print(f"Missing dependencies: {', '.join(missing)}")
             print("Please install requirements: pip install -r requirements.txt")
             return False
+            
+        # Check admin privileges for keyboard module
+        if HAS_KEYBOARD and platform.system() == "Windows" and not is_admin():
+            print("\n⚠️  WARNING: Not running with administrator privileges!")
+            print("   Global keyboard shortcuts may not work properly.")
+            print("   You can still use the application with mouse clicks.")
+            print("   To use keyboard shortcuts, run as administrator.\n")
             
         # Initialize components
         try:
@@ -199,6 +225,14 @@ class SpeechToTextApp:
         if not self.is_recording:
             return
             
+        # Debug logging
+        if not hasattr(self, '_chunk_count'):
+            self._chunk_count = 0
+        self._chunk_count += 1
+        
+        if self._chunk_count <= 5:
+            print(f"Processing audio chunk #{self._chunk_count}: shape={audio_data.shape}, max={np.max(np.abs(audio_data)):.4f}")
+            
         # Update audio level
         level = float(np.sqrt(np.mean(audio_data**2))) * 10  # Scale for display
         self.display.set_audio_level(level)
@@ -211,24 +245,33 @@ class SpeechToTextApp:
         pass
         
     def transcription_worker(self):
+        print("Transcription worker started")
+        processed_count = 0
+        
         while self.is_running:
             try:
                 # Get audio from queue
                 audio_data = self.transcription_queue.get(timeout=0.1)
+                processed_count += 1
+                
+                print(f"Transcribing audio chunk {processed_count}: shape={audio_data.shape}")
                 
                 # Transcribe
                 result = self.transcriber.transcribe(audio_data)
                 
-                if result and result.text:
-                    # Add to display
-                    self.display.add_transcription(
-                        result.text,
-                        result.confidence,
-                        result.timestamp
-                    )
+                if result:
+                    print(f"Transcription result: text='{result.text}', confidence={result.confidence:.2f}")
                     
-                    # Accumulate for saving
-                    self.accumulated_text.append(result.text)
+                    if result.text and not result.text.startswith("[Error"):
+                        # Add to display
+                        self.display.add_transcription(
+                            result.text,
+                            result.confidence,
+                            result.timestamp
+                        )
+                        
+                        # Accumulate for saving
+                        self.accumulated_text.append(result.text)
                     
                     # Show processing time in debug mode
                     if UI_CONFIG.get("show_processing_time"):
@@ -237,7 +280,8 @@ class SpeechToTextApp:
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"Transcription error: {e}")
+                import traceback
+                print(f"Transcription worker error: {e}\n{traceback.format_exc()}")
                 
     def monitor_worker(self):
         while self.is_running:
@@ -378,8 +422,39 @@ class SpeechToTextApp:
         monitor_thread.daemon = True
         monitor_thread.start()
         
-        print("\nReady! Press SPACE to start recording...")
-        print(f"Press {SHORTCUTS['quit'].upper()} to quit")
+        print("\n" + "="*60)
+        print("READY TO TRANSCRIBE!")
+        print("="*60)
+        
+        if not HAS_KEYBOARD or (platform.system() == "Windows" and not is_admin()):
+            print("\n⚠️  Keyboard shortcuts not available (need admin rights)")
+            print("Starting recording automatically in 3 seconds...")
+            time.sleep(3)
+            self.start_recording()
+            print("\n🔴 RECORDING STARTED - Speak now!")
+        else:
+            print(f"\nPress SPACE to start recording...")
+            print(f"Press {SHORTCUTS['quit'].upper()} to quit")
+        
+        # Add thread for command input if no keyboard module
+        if not HAS_KEYBOARD or (platform.system() == "Windows" and not is_admin()):
+            def command_input():
+                print("\nCommands: (s)ave, (q)uit, (c)lear")
+                while self.is_running:
+                    try:
+                        cmd = input().lower().strip()
+                        if cmd == 's':
+                            self.save_transcript()
+                        elif cmd == 'q':
+                            self.quit()
+                        elif cmd == 'c':
+                            self.clear_transcript()
+                    except:
+                        pass
+                        
+            cmd_thread = threading.Thread(target=command_input)
+            cmd_thread.daemon = True
+            cmd_thread.start()
         
         try:
             # Main loop

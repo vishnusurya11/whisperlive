@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhisperLive - Real-Time Speech Transcription</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo">
+                <i class="fas fa-microphone-alt"></i>
+                <h1>WhisperLive</h1>
+            </div>
+            <div class="status">
+                <span id="gpu-status" class="status-item">
+                    <i class="fas fa-microchip"></i>
+                    <span class="status-text">Checking GPU...</span>
+                </span>
+                <span id="model-status" class="status-item">
+                    <i class="fas fa-brain"></i>
+                    <span class="status-text">Loading Model...</span>
+                </span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main>
+            <!-- Audio Visualizer -->
+            <div class="visualizer-container">
+                <canvas id="visualizer" width="800" height="150"></canvas>
+                <div class="audio-level">
+                    <div class="level-bar" id="level-bar"></div>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="controls">
+                <button id="record-btn" class="btn btn-primary" disabled>
+                    <i class="fas fa-microphone"></i>
+                    <span>Start Recording</span>
+                </button>
+                <button id="save-btn" class="btn btn-secondary" disabled>
+                    <i class="fas fa-save"></i>
+                    <span>Save Transcript</span>
+                </button>
+                <button id="clear-btn" class="btn btn-secondary">
+                    <i class="fas fa-trash"></i>
+                    <span>Clear</span>
+                </button>
+                <div class="select-group">
+                    <div class="model-select">
+                        <label for="model">Model:</label>
+                        <select id="model">
+                            <option value="tiny">Tiny (39M)</option>
+                            <option value="base">Base (74M)</option>
+                            <option value="small">Small (244M)</option>
+                            <option value="medium">Medium (769M)</option>
+                            <option value="large">Large (1.5B)</option>
+                            <option value="large-v2">Large-v2 (1.5B)</option>
+                            <option value="large-v3" selected>Large-v3 (1.5B)</option>
+                        </select>
+                    </div>
+                    <div class="device-select">
+                        <label for="audio-device">Microphone:</label>
+                        <select id="audio-device">
+                            <option value="default">Default Microphone</option>
+                        </select>
+                    </div>
+                    <div class="language-select">
+                        <label for="language">Language:</label>
+                        <select id="language">
+                            <option value="en" selected>English</option>
+                            <option value="hi">Hindi</option>
+                            <option value="auto">Auto-detect</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transcription Area -->
+            <div class="transcription-container">
+                <div class="transcription-header">
+                    <h2>Transcription</h2>
+                    <div class="stats">
+                        <span id="word-count">0 words</span>
+                        <span id="duration">00:00</span>
+                    </div>
+                </div>
+                <div id="transcription" class="transcription-area">
+                    <p class="placeholder">Click "Start Recording" to begin transcribing...</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer>
+            <p>Optimized for Indian accents • Powered by OpenAI Whisper</p>
+        </footer>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="spinner"></div>
+        <p>Loading Whisper Model...</p>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/audio-wav.js') }}?v=2"></script>
+</body>
+</html>

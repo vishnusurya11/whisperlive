@@ -87,6 +87,16 @@ class AudioCapture:
         if status:
             print(f"Audio callback status: {status}")
             
+        # Debug: Check if we're getting audio
+        if hasattr(self, '_callback_count'):
+            self._callback_count += 1
+        else:
+            self._callback_count = 1
+            
+        # Log first few callbacks
+        if self._callback_count <= 5:
+            print(f"Audio callback #{self._callback_count}: shape={indata.shape}, max={np.max(np.abs(indata)):.4f}")
+            
         # Convert to mono if needed
         audio_data = indata[:, 0] if indata.shape[1] > 1 else indata.flatten()
         
@@ -185,14 +195,14 @@ class AudioCapture:
             
     def check_microphone_permission(self) -> Tuple[bool, str]:
         try:
-            # Try to create a short test stream
+            # Try to create a test stream without duration parameter
             test_stream = sd.InputStream(
                 device=self.device_index,
                 channels=1,
                 samplerate=self.sample_rate,
-                blocksize=1024,
-                duration=0.1
+                blocksize=1024
             )
+            # Immediately close it
             test_stream.close()
             return True, "Microphone access granted"
         except sd.PortAudioError as e:

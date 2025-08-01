@@ -25,6 +25,13 @@ pynvml==11.5.0
 # Audio format support
 librosa==0.10.1
 soundfile==0.12.1
+pydub==0.25.1
+ffmpeg-python==0.2.0
 
 # Threading and async
 asyncio-throttle==1.0.2
+
+# Web framework
+flask==3.0.0
+flask-socketio==5.3.5
+python-socketio==5.10.0

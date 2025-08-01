@@ -163,9 +163,11 @@ class WhisperTranscriber:
             )
             
         except Exception as e:
-            print(f"Transcription error: {e}")
+            import traceback
+            error_msg = f"Transcription error: {str(e)}\n{traceback.format_exc()}"
+            print(error_msg)
             return TranscriptionResult(
-                text="[Error in transcription]",
+                text=f"[Error: {str(e)}]",
                 language="en",
                 confidence=0.0,
                 processing_time=time.time() - start_time,
@@ -196,13 +198,25 @@ class WhisperTranscriber:
         if self.device != "cuda" or not torch.cuda.is_available():
             return {"device": "CPU", "available": False}
             
-        return {
+        stats = {
             "device": torch.cuda.get_device_name(0),
             "available": True,
             "memory_used": torch.cuda.memory_allocated() / 1024**3,  # GB
             "memory_total": torch.cuda.get_device_properties(0).total_memory / 1024**3,  # GB
-            "utilization": torch.cuda.utilization(),
         }
+        
+        # Try to get GPU utilization using pynvml if available
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            stats["utilization"] = util.gpu
+            pynvml.nvmlShutdown()
+        except:
+            stats["utilization"] = 0  # Default if pynvml not available
+            
+        return stats
         
     def cleanup(self):
         self.is_processing = False

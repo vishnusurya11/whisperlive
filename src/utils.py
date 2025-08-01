@@ -107,27 +107,32 @@ class SystemMonitor:
 def check_dependencies() -> Tuple[bool, List[str]]:
     missing = []
     
-    # Check critical imports
+    # Check critical imports with detailed info
     required_modules = [
-        "whisper",
-        "torch",
-        "sounddevice",
-        "numpy",
-        "rich",
-        "keyboard"
+        ("whisper", "openai-whisper"),
+        ("torch", "torch"),
+        ("sounddevice", "sounddevice"),
+        ("numpy", "numpy"),
+        ("rich", "rich"),
+        ("keyboard", "keyboard"),
+        ("colorama", "colorama"),
+        ("psutil", "psutil"),
+        ("scipy", "scipy"),
     ]
     
-    for module in required_modules:
+    for module_name, package_name in required_modules:
         try:
-            __import__(module)
+            __import__(module_name)
         except ImportError:
-            missing.append(module)
+            missing.append(f"{module_name} (install: pip install {package_name})")
             
-    # Check CUDA availability
+    # Check CUDA availability (optional but recommended)
     try:
         import torch
-        if not torch.cuda.is_available():
-            missing.append("CUDA (GPU support)")
+        if torch.cuda.is_available():
+            print(f"✓ GPU detected: {torch.cuda.get_device_name(0)}")
+        else:
+            print("ℹ️  No GPU detected - will use CPU (slower)")
     except:
         pass
         
