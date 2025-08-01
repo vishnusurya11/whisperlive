@@ -465,6 +465,8 @@ def load_model():
 def transcribe_file():
     """Handle file upload and transcription"""
     def generate():
+        global MODEL_SIZE
+        
         try:
             # Get file and parameters
             file = request.files.get('file')
@@ -485,7 +487,6 @@ def transcribe_file():
             yield f"data: {json.dumps({'status': 'processing', 'message': 'File uploaded', 'progress': 10})}\n\n"
             
             # Check if model needs to be changed
-            global MODEL_SIZE
             if model_size != MODEL_SIZE:
                 yield f"data: {json.dumps({'status': 'processing', 'message': f'Loading {model_size} model...', 'progress': 20})}\n\n"
                 MODEL_SIZE = model_size
