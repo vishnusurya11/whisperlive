@@ -21,6 +21,7 @@ transcripts/
 !QUICKSTART.md
 !implementation_tasks.md
 !requirements.txt
+!requirements_simple.txt
 
 # IDE
 .vscode/
