@@ -18,6 +18,7 @@ transcripts/
 *.txt
 *.md
 !README.md
+!QUICKSTART.md
 !implementation_tasks.md
 !requirements.txt
 
