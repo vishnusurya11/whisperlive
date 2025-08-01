@@ -4,7 +4,7 @@ WhisperLive Web Application
 Modern web-based real-time speech transcription
 """
 
-from flask import Flask, render_template, jsonify, request, send_file
+from flask import Flask, render_template, jsonify, request, send_file, Response
 from flask_socketio import SocketIO, emit
 import whisper
 import torch
@@ -17,6 +17,7 @@ import queue
 from datetime import datetime
 import os
 import json
+from werkzeug.utils import secure_filename
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -92,9 +93,19 @@ class TranscriptionProcessor:
 processor = TranscriptionProcessor()
 
 @app.route('/')
-def index():
-    """Serve the main page"""
-    return render_template('index.html')
+def home():
+    """Serve the home page"""
+    return render_template('home.html')
+
+@app.route('/record')
+def record():
+    """Serve the recording page"""
+    return render_template('record.html')
+
+@app.route('/upload')
+def upload():
+    """Serve the upload page"""
+    return render_template('upload.html')
 
 @app.route('/status')
 def status():
@@ -449,6 +460,144 @@ def load_model():
         print(f"Error loading model: {e}")
         model_loading = False
         socketio.emit('error', {'message': f"Failed to load model: {str(e)}"})
+
+@app.route('/transcribe_file', methods=['POST'])
+def transcribe_file():
+    """Handle file upload and transcription"""
+    def generate():
+        try:
+            # Get file and parameters
+            file = request.files.get('file')
+            model_size = request.form.get('model', MODEL_SIZE)
+            language = request.form.get('language', 'auto')
+            
+            if not file:
+                yield f"data: {json.dumps({'status': 'error', 'message': 'No file provided'})}\n\n"
+                return
+            
+            # Save uploaded file
+            filename = secure_filename(file.filename)
+            temp_path = os.path.join("temp", f"upload_{int(time.time())}_{filename}")
+            os.makedirs("temp", exist_ok=True)
+            file.save(temp_path)
+            
+            # Send progress update
+            yield f"data: {json.dumps({'status': 'processing', 'message': 'File uploaded', 'progress': 10})}\n\n"
+            
+            # Check if model needs to be changed
+            global MODEL_SIZE
+            if model_size != MODEL_SIZE:
+                yield f"data: {json.dumps({'status': 'processing', 'message': f'Loading {model_size} model...', 'progress': 20})}\n\n"
+                MODEL_SIZE = model_size
+                load_model()
+            
+            yield f"data: {json.dumps({'status': 'processing', 'message': 'Processing audio...', 'progress': 40})}\n\n"
+            
+            # Process the file
+            start_time = time.time()
+            
+            # Extract audio if it's a video file
+            file_ext = os.path.splitext(filename)[1].lower()
+            video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm']
+            
+            if file_ext in video_extensions:
+                yield f"data: {json.dumps({'status': 'processing', 'message': 'Extracting audio from video...', 'progress': 50})}\n\n"
+                # For now, we'll just try to process it directly
+                # In production, you'd use moviepy or ffmpeg to extract audio
+            
+            yield f"data: {json.dumps({'status': 'processing', 'message': 'Transcribing with Whisper...', 'progress': 70})}\n\n"
+            
+            # Transcribe with Whisper
+            if model is None:
+                yield f"data: {json.dumps({'status': 'error', 'message': 'Model not loaded'})}\n\n"
+                return
+            
+            # Determine language parameter
+            lang = None if language == 'auto' else language
+            
+            # Load audio and transcribe
+            try:
+                # Try to load with scipy first (for WAV files)
+                if file_ext == '.wav':
+                    import scipy.io.wavfile
+                    sample_rate, audio_data = scipy.io.wavfile.read(temp_path)
+                    
+                    # Convert to float32 and normalize
+                    if audio_data.dtype == np.int16:
+                        audio_data = audio_data.astype(np.float32) / 32768.0
+                    elif audio_data.dtype == np.int32:
+                        audio_data = audio_data.astype(np.float32) / 2147483648.0
+                    else:
+                        audio_data = audio_data.astype(np.float32)
+                    
+                    # Resample if needed
+                    if sample_rate != 16000:
+                        import scipy.signal
+                        audio_data = scipy.signal.resample(audio_data, int(len(audio_data) * 16000 / sample_rate))
+                    
+                    # Transcribe numpy array
+                    result = model.transcribe(
+                        audio_data,
+                        language=lang,
+                        fp16=(torch.cuda.is_available()),
+                        verbose=False
+                    )
+                else:
+                    # For other formats, let Whisper handle it (requires ffmpeg)
+                    # Or use librosa as fallback
+                    try:
+                        result = model.transcribe(
+                            temp_path,
+                            language=lang,
+                            fp16=(torch.cuda.is_available()),
+                            verbose=False
+                        )
+                    except:
+                        # Try with librosa
+                        import librosa
+                        audio_data, _ = librosa.load(temp_path, sr=16000, mono=True)
+                        result = model.transcribe(
+                            audio_data,
+                            language=lang,
+                            fp16=(torch.cuda.is_available()),
+                            verbose=False
+                        )
+                
+            except Exception as e:
+                print(f"Audio processing error: {e}")
+                # Last resort: try direct transcription
+                result = model.transcribe(
+                    temp_path,
+                    language=lang,
+                    fp16=(torch.cuda.is_available()),
+                    verbose=False
+                )
+            
+            processing_time = time.time() - start_time
+            
+            # Clean up temp file
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+            
+            # Send final result
+            yield f"data: {json.dumps({
+                'status': 'complete',
+                'transcription': result['text'],
+                'language': result.get('language', language),
+                'model': MODEL_SIZE,
+                'processing_time': processing_time,
+                'progress': 100
+            })}\n\n"
+            
+        except Exception as e:
+            print(f"Transcription error: {e}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+    
+    return Response(generate(), mimetype='text/event-stream')
 
 # Load model in background when server starts
 threading.Thread(target=load_model, daemon=True).start()
