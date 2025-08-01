@@ -464,42 +464,57 @@ def load_model():
 @app.route('/transcribe_file', methods=['POST'])
 def transcribe_file():
     """Handle file upload and transcription"""
-    def generate():
+    # Get file and parameters BEFORE entering generator
+    file = request.files.get('file')
+    model_size = request.form.get('model', MODEL_SIZE)
+    language = request.form.get('language', 'auto')
+    
+    if not file:
+        return Response(
+            f"data: {json.dumps({'status': 'error', 'message': 'No file provided'})}\n\n",
+            mimetype='text/event-stream'
+        )
+    
+    # Save uploaded file BEFORE entering generator
+    filename = secure_filename(file.filename)
+    temp_path = os.path.join("temp", f"upload_{int(time.time())}_{filename}")
+    os.makedirs("temp", exist_ok=True)
+    file.save(temp_path)
+    
+    def generate(saved_path, saved_filename, model_size_param, language_param):
         global MODEL_SIZE
         
         try:
-            # Get file and parameters
-            file = request.files.get('file')
-            model_size = request.form.get('model', MODEL_SIZE)
-            language = request.form.get('language', 'auto')
             
-            if not file:
-                yield f"data: {json.dumps({'status': 'error', 'message': 'No file provided'})}\n\n"
+            # Check file format FIRST before any processing
+            file_ext = os.path.splitext(saved_filename)[1].lower()
+            video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm']
+            
+            # Check if file format is supported
+            # Audio files should be converted to WAV on client side, so we should only receive WAV files
+            # If we receive other audio formats, it means client-side conversion failed
+            if file_ext not in ['.wav'] + video_extensions:
+                yield f"data: {json.dumps({'status': 'error', 'message': f'Unsupported file format: {file_ext}. Audio files should be automatically converted to WAV format.'})}\n\n"
+                # Clean up
+                try:
+                    os.remove(saved_path)
+                except:
+                    pass
                 return
-            
-            # Save uploaded file
-            filename = secure_filename(file.filename)
-            temp_path = os.path.join("temp", f"upload_{int(time.time())}_{filename}")
-            os.makedirs("temp", exist_ok=True)
-            file.save(temp_path)
             
             # Send progress update
             yield f"data: {json.dumps({'status': 'processing', 'message': 'File uploaded', 'progress': 10})}\n\n"
             
             # Check if model needs to be changed
-            if model_size != MODEL_SIZE:
-                yield f"data: {json.dumps({'status': 'processing', 'message': f'Loading {model_size} model...', 'progress': 20})}\n\n"
-                MODEL_SIZE = model_size
+            if model_size_param != MODEL_SIZE:
+                yield f"data: {json.dumps({'status': 'processing', 'message': f'Loading {model_size_param} model...', 'progress': 20})}\n\n"
+                MODEL_SIZE = model_size_param
                 load_model()
             
             yield f"data: {json.dumps({'status': 'processing', 'message': 'Processing audio...', 'progress': 40})}\n\n"
             
             # Process the file
             start_time = time.time()
-            
-            # Extract audio if it's a video file
-            file_ext = os.path.splitext(filename)[1].lower()
-            video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm']
             
             if file_ext in video_extensions:
                 yield f"data: {json.dumps({'status': 'processing', 'message': 'Extracting audio from video...', 'progress': 50})}\n\n"
@@ -514,14 +529,14 @@ def transcribe_file():
                 return
             
             # Determine language parameter
-            lang = None if language == 'auto' else language
+            lang = None if language_param == 'auto' else language_param
             
             # Load audio and transcribe
             try:
-                # Try to load with scipy first (for WAV files)
+                # For WAV files - no ffmpeg needed
                 if file_ext == '.wav':
                     import scipy.io.wavfile
-                    sample_rate, audio_data = scipy.io.wavfile.read(temp_path)
+                    sample_rate, audio_data = scipy.io.wavfile.read(saved_path)
                     
                     # Convert to float32 and normalize
                     if audio_data.dtype == np.int16:
@@ -544,41 +559,34 @@ def transcribe_file():
                         verbose=False
                     )
                 else:
-                    # For other formats, let Whisper handle it (requires ffmpeg)
-                    # Or use librosa as fallback
-                    try:
-                        result = model.transcribe(
-                            temp_path,
-                            language=lang,
-                            fp16=(torch.cuda.is_available()),
-                            verbose=False
-                        )
-                    except:
-                        # Try with librosa
-                        import librosa
-                        audio_data, _ = librosa.load(temp_path, sr=16000, mono=True)
-                        result = model.transcribe(
-                            audio_data,
-                            language=lang,
-                            fp16=(torch.cuda.is_available()),
-                            verbose=False
-                        )
+                    # For video formats - Whisper will handle with ffmpeg if available
+                    # If ffmpeg is not available, this will fail with a clear error
+                    result = model.transcribe(
+                        saved_path,
+                        language=lang,
+                        fp16=(torch.cuda.is_available()),
+                        verbose=False
+                    )
                 
             except Exception as e:
                 print(f"Audio processing error: {e}")
-                # Last resort: try direct transcription
-                result = model.transcribe(
-                    temp_path,
-                    language=lang,
-                    fp16=(torch.cuda.is_available()),
-                    verbose=False
-                )
+                error_msg = str(e)
+                if "ffmpeg" in error_msg.lower() or "FileNotFoundError" in str(type(e)):
+                    yield f"data: {json.dumps({'status': 'error', 'message': 'This file format requires ffmpeg which is not installed. For audio files, please convert to WAV format. For video files, please install ffmpeg.'})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'status': 'error', 'message': f'Error processing file: {error_msg}'})}\n\n"
+                # Clean up
+                try:
+                    os.remove(saved_path)
+                except:
+                    pass
+                return
             
             processing_time = time.time() - start_time
             
             # Clean up temp file
             try:
-                os.remove(temp_path)
+                os.remove(saved_path)
             except:
                 pass
             
@@ -586,7 +594,7 @@ def transcribe_file():
             yield f"data: {json.dumps({
                 'status': 'complete',
                 'transcription': result['text'],
-                'language': result.get('language', language),
+                'language': result.get('language', language_param),
                 'model': MODEL_SIZE,
                 'processing_time': processing_time,
                 'progress': 100
@@ -598,7 +606,7 @@ def transcribe_file():
             traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
     
-    return Response(generate(), mimetype='text/event-stream')
+    return Response(generate(temp_path, filename, model_size, language), mimetype='text/event-stream')
 
 # Load model in background when server starts
 threading.Thread(target=load_model, daemon=True).start()

@@ -121,23 +121,18 @@ class FileUploadHandler {
             return;
         }
 
-        const supportedFormats = [
-            // Audio formats
-            'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/wave',
-            'audio/mp4', 'audio/x-m4a', 'audio/flac', 'audio/ogg', 'audio/webm',
-            'audio/x-ms-wma',
-            // Video formats
-            'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo',
-            'video/x-matroska', 'video/webm'
-        ];
-
-        // Check file extension if MIME type is not recognized
+        // Check file extension
         const extension = file.name.split('.').pop().toLowerCase();
-        const supportedExtensions = ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'wma', 'mp4', 'avi', 'mov', 'mkv', 'webm'];
+        const audioExtensions = ['wav', 'mp3', 'm4a', 'flac', 'ogg', 'wma', 'webm'];
+        const videoExtensions = ['mp4', 'avi', 'mov', 'mkv'];
         
-        if (!supportedFormats.includes(file.type) && !supportedExtensions.includes(extension)) {
+        if (!audioExtensions.includes(extension) && !videoExtensions.includes(extension)) {
             this.showToast('Unsupported file format.', 'error');
             return;
+        }
+        
+        if (videoExtensions.includes(extension)) {
+            this.showToast('Note: Video files require ffmpeg to be installed', 'info');
         }
 
         this.selectedFile = file;
@@ -173,18 +168,43 @@ class FileUploadHandler {
     async startTranscription() {
         if (!this.selectedFile) return;
 
-        // Prepare form data
-        const formData = new FormData();
-        formData.append('file', this.selectedFile);
-        formData.append('model', this.elements.modelSelect.value);
-        formData.append('language', this.elements.languageSelect.value);
-
         // Show progress
         this.elements.progressContainer.style.display = 'block';
         this.elements.transcribeBtn.disabled = true;
-        this.elements.progressStatus.textContent = 'Uploading file...';
 
         try {
+            // Check if we need to convert audio
+            const extension = this.selectedFile.name.split('.').pop().toLowerCase();
+            const needsConversion = ['mp3', 'm4a', 'flac', 'ogg', 'wma', 'webm'].includes(extension);
+            
+            let fileToUpload = this.selectedFile;
+            
+            if (needsConversion && this.selectedFile.type.startsWith('audio/')) {
+                // Convert audio to WAV
+                this.elements.progressStatus.textContent = 'Converting audio to WAV format...';
+                this.elements.progressPercent.textContent = '0%';
+                this.elements.progressFill.style.width = '0%';
+                
+                try {
+                    fileToUpload = await this.convertAudioToWAV(this.selectedFile);
+                    this.showToast('Audio converted to WAV successfully', 'success');
+                } catch (error) {
+                    console.error('Audio conversion error:', error);
+                    this.showToast('Failed to convert audio. Please convert to WAV manually.', 'error');
+                    this.elements.transcribeBtn.disabled = false;
+                    this.elements.progressContainer.style.display = 'none';
+                    return;
+                }
+            }
+
+            // Prepare form data
+            const formData = new FormData();
+            formData.append('file', fileToUpload);
+            formData.append('model', this.elements.modelSelect.value);
+            formData.append('language', this.elements.languageSelect.value);
+
+            this.elements.progressStatus.textContent = 'Uploading file...';
+
             const response = await fetch('/transcribe_file', {
                 method: 'POST',
                 body: formData
@@ -335,6 +355,118 @@ ${this.currentTranscription}`;
         const sizes = ['Bytes', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    async convertAudioToWAV(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            
+            reader.onload = async (e) => {
+                try {
+                    // Create audio context
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    
+                    // Decode audio data
+                    const arrayBuffer = e.target.result;
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    
+                    // Update progress
+                    this.elements.progressPercent.textContent = '50%';
+                    this.elements.progressFill.style.width = '50%';
+                    
+                    // Convert to mono and resample to 16kHz
+                    const sampleRate = 16000;
+                    const numberOfChannels = 1;
+                    const length = Math.floor(audioBuffer.duration * sampleRate);
+                    
+                    // Create offline context for resampling
+                    const offlineContext = new OfflineAudioContext(
+                        numberOfChannels,
+                        length,
+                        sampleRate
+                    );
+                    
+                    // Create buffer source
+                    const source = offlineContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(offlineContext.destination);
+                    source.start(0);
+                    
+                    // Render audio
+                    const renderedBuffer = await offlineContext.startRendering();
+                    
+                    // Update progress
+                    this.elements.progressPercent.textContent = '75%';
+                    this.elements.progressFill.style.width = '75%';
+                    
+                    // Get audio data as Float32Array
+                    const audioData = renderedBuffer.getChannelData(0);
+                    
+                    // Create WAV file
+                    const wavBlob = this.createWAVBlob(audioData, sampleRate);
+                    
+                    // Create new File object with .wav extension
+                    const wavFileName = file.name.replace(/\.[^/.]+$/, '') + '.wav';
+                    const wavFile = new File([wavBlob], wavFileName, { type: 'audio/wav' });
+                    
+                    // Update progress
+                    this.elements.progressPercent.textContent = '100%';
+                    this.elements.progressFill.style.width = '100%';
+                    
+                    // Close audio context
+                    audioContext.close();
+                    
+                    resolve(wavFile);
+                } catch (error) {
+                    reject(error);
+                }
+            };
+            
+            reader.onerror = () => reject(new Error('Failed to read file'));
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    createWAVBlob(audioData, sampleRate) {
+        const length = audioData.length;
+        const arrayBuffer = new ArrayBuffer(44 + length * 2);
+        const view = new DataView(arrayBuffer);
+        
+        // Helper function to write string
+        const writeString = (offset, string) => {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        };
+        
+        // RIFF chunk descriptor
+        writeString(0, 'RIFF');
+        view.setUint32(4, 36 + length * 2, true);
+        writeString(8, 'WAVE');
+        
+        // fmt sub-chunk
+        writeString(12, 'fmt ');
+        view.setUint32(16, 16, true); // Subchunk1Size
+        view.setUint16(20, 1, true); // AudioFormat (PCM)
+        view.setUint16(22, 1, true); // NumChannels
+        view.setUint32(24, sampleRate, true); // SampleRate
+        view.setUint32(28, sampleRate * 2, true); // ByteRate
+        view.setUint16(32, 2, true); // BlockAlign
+        view.setUint16(34, 16, true); // BitsPerSample
+        
+        // data sub-chunk
+        writeString(36, 'data');
+        view.setUint32(40, length * 2, true);
+        
+        // Convert float samples to 16-bit PCM
+        let offset = 44;
+        for (let i = 0; i < length; i++) {
+            const sample = Math.max(-1, Math.min(1, audioData[i]));
+            view.setInt16(offset, sample * 0x7FFF, true);
+            offset += 2;
+        }
+        
+        return new Blob([arrayBuffer], { type: 'audio/wav' });
     }
 
     showToast(message, type = 'info') {
